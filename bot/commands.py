@@ -1,5 +1,4 @@
-import psycopg2.sql
-from telegram import ForceReply, Update
+from telegram import ForceReply, Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, ConversationHandler
 
 import re
@@ -25,6 +24,7 @@ def query_SSH(query : str) -> str:
         client.connect(hostname=config['RM_HOST'], username=config['RM_USER'], password=config['RM_PASSWORD'], port=config['RM_PORT'])
         stdin, stdout, stderr = client.exec_command(query)
         data = stdout.read().decode() + stderr.read().decode()
+        logging.info("SSH: Команда %s успешно выполнена", query)
         return str(data).replace('\\n', '\n').replace('\\t', '\t')
     except (Exception) as error:
         logging.error("Ошибка при работе с SSH: %s", error)
@@ -33,7 +33,8 @@ def query_SSH(query : str) -> str:
         if client.get_transport() is not None:
             client.close()
 
-def query_DB(sql : sql.SQL) -> str:
+#Connect and send a request to the data base and receiving a response
+def query_DB(sql : sql.SQL) -> tuple:
     connection = None
     data = ""
     try:
@@ -42,22 +43,44 @@ def query_DB(sql : sql.SQL) -> str:
                                 host=config['DB_HOST'],
                                 port=config['DB_PORT'], 
                                 database=config['DB_DATABASE'])
-
+        connection.autocommit = True
         cursor = connection.cursor()
         cursor.execute(query = sql)
-        for row in cursor:
-            data += ' '.join(map(str, row)) + '\n'  
-        logging.info("Команда %s успешно выполнена", sql.as_string)
-        data += "Команда успешно выполнена"
-        return data
+        if cursor.pgresult_ptr is not None:
+            for row in cursor:
+                data += ' '.join(map(str, row)) + '\n'  
+        logging.info("PostgreSQL: Команда %s успешно выполнена", sql.as_string)
+        return True, data
     except (Exception, Error) as error:
         logging.error("Ошибка при работе с PostgreSQL: %s", error)
-        data += "Ошибка при работе с PostgreSQL."
-        return data 
+        return False, data 
     finally:
         if connection is not None:
             cursor.close()
             connection.close()
+
+
+async def inline_button_insert(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Parses the CallbackQuery and updates the message text."""
+    query = update.callback_query
+
+    # CallbackQueries need to be answered, even if no notification to the user is needed
+    # Some clients may have trouble otherwise. See https://core.telegram.org/bots/api#callbackquery
+    await query.answer()
+    data = context.user_data[query.data + "_data"].split('\n')
+    table = context.user_data[query.data + "_table"]
+    column = context.user_data[query.data + "_column"]
+    text = ''
+    for row in data:
+        result = query_DB(sql.SQL("INSERT INTO {table} ({column}) VALUES ({value});")
+                    .format(table = sql.Identifier(table),
+                            column = sql.Identifier(column),
+                            value = sql.Literal(row)))
+        if result[0]:
+            text += f"{column.capitalize()}: {row} успешно сохранён\n"
+        else:
+            text += f"{column.capitalize()}: {row} не сохранён\n'" 
+    await query.edit_message_text(text=text)
 
 # Define a few command handlers. These usually take the two arguments update and
 # context.
@@ -83,28 +106,34 @@ async def find_email_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def find_email_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     regex = re.compile(r"((?:[a-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[a-z0-9!#$%&'*+/=?^_`{|}~-]+)*|\"(?:[\x01-\x08\x0b\x0c\x0e-\x1f\x21\x23-\x5b\x5d-\x7f]|\\[\x01-\x09\x0b\x0c\x0e-\x7f])*\")@(?:(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]*[a-z0-9])?|\[(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?|[a-z0-9-]*[a-z0-9]:(?:[\x01-\x08\x0b\x0c\x0e-\x1f\x21-\x5a\x53-\x7f]|\\[\x01-\x09\x0b\x0c\x0e-\x7f])+)\]))")
     email = update.message.text
+    id = str(update.update_id)
     result = re.finditer(regex, email)
-    data = ''
-    i = 0
-    for match in result:
-        i+=1
-        data += f'{i}. {match.group(0)}\n'
-    if data:
+    data = '\n'.join(match.group(0) for match in result)
+    context.user_data[id + "_data"] = data
+    context.user_data[id + "_table"] = "emails"
+    context.user_data[id + "_column"] = "email"
+    if data:        
         data = "Найденные email адреса:\n" + data
+        msgs = [data[i:i + 4096] for i in range(0, len(data), 4096)]
+        for i in range(0, len(msgs)-1):
+            await update.message.reply_text(text=msgs[i])
+        await update.message.reply_text(msgs[-1], reply_markup=InlineKeyboardMarkup(
+                    [[InlineKeyboardButton("Записать данные", callback_data=id)]]))
     else:
-        data = "В тексте не содержатся email адреса."
-    msgs = [data[i:i + 4096] for i in range(0, len(data), 4096)]
-    for text in msgs:
-       await update.message.reply_text(text=text)
+       await update.message.reply_text(text="В тексте не содержатся email адреса.")
     return ConversationHandler.END
 
 
 async def get_emails_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a message when the command /get_emails is issued."""
-    data = query_DB(sql.SQL("select * from emails"))
-    msgs = [data[i:i + 4096] for i in range(0, len(data), 4096)]
-    for text in msgs:
-       await update.message.reply_text(text=text)
+    result = query_DB(sql.SQL("select * from emails"))
+    if result[0]:
+        data = result[1]
+        msgs = [data[i:i + 4096] for i in range(0, len(data), 4096)]
+        for text in msgs:
+            await update.message.reply_text(text=text)
+    else:
+       await update.message.reply_text(text="Ошибка при работе с PostgreSQL.")
 
 
 async def find_phone_number_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -115,27 +144,33 @@ async def find_phone_number_command(update: Update, context: ContextTypes.DEFAUL
 async def find_phone_number_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     regex = re.compile(r"(?:\+7|8)+[ \-\(]?\(?(\d{3})\)?[ \-\)]?(\d{3})[ \-]?(\d{2})[ \-]?(\d{2})")
     phone_number = update.message.text
+    id = str(update.update_id)
     result = re.finditer(regex, phone_number)
-    data = ''
-    i = 0
-    for match in result:
-        i+=1
-        data += f'{i}. {match.group(0)}\n'
-    if data:
+    data = '\n'.join(match.group(0) for match in result)
+    context.user_data[id + "_data"] = data
+    context.user_data[id + "_table"] = "phones"
+    context.user_data[id + "_column"] = "phone"
+    if data:        
         data = "Найденные номера телефонов:\n" + data
+        msgs = [data[i:i + 4096] for i in range(0, len(data), 4096)]
+        for i in range(0, len(msgs)-1):
+            await update.message.reply_text(text=msgs[i])
+        await update.message.reply_text(msgs[-1], reply_markup=InlineKeyboardMarkup(
+                    [[InlineKeyboardButton("Записать данные", callback_data=id)]]))
     else:
-        data = "В тексте не содержатся номера телефонов."
-    msgs = [data[i:i + 4096] for i in range(0, len(data), 4096)]
-    for text in msgs:
-       await update.message.reply_text(text=text)
+       await update.message.reply_text(text="В тексте не содержатся номера телефонов.")
     return ConversationHandler.END
 
 async def get_phone_numbers_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a message when the command /get_phone_numbers is issued."""
-    data = query_DB(sql.SQL("select * from phones"))
-    msgs = [data[i:i + 4096] for i in range(0, len(data), 4096)]
-    for text in msgs:
-       await update.message.reply_text(text=text)
+    result = query_DB(sql.SQL("select * from phones"))
+    if result[0]:
+        data = result[1]
+        msgs = [data[i:i + 4096] for i in range(0, len(data), 4096)]
+        for text in msgs:
+            await update.message.reply_text(text=text)
+    else:
+       await update.message.reply_text(text="Ошибка при работе с PostgreSQL.")
 
 
 async def get_repl_logs_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

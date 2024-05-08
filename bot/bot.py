@@ -3,9 +3,10 @@ import logging
 from dotenv import dotenv_values, find_dotenv
 
 from telegram import Update
-from telegram.ext import Application, CommandHandler, ConversationHandler, MessageHandler, filters
+from telegram.ext import Application, CommandHandler, ConversationHandler, MessageHandler, filters, CallbackQueryHandler
 
 from commands import(
+    inline_button_insert,
     start,
     help_command,
     find_email_command,
@@ -123,7 +124,7 @@ def main() -> None:
 
     # on different commands - answer in Telegram
     application.add_handlers(command_handlers)
-
+    application.add_handler(CallbackQueryHandler(inline_button_insert))
     # Run the bot until the user presses Ctrl-C
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
