@@ -1,11 +1,15 @@
+import psycopg2.sql
 from telegram import ForceReply, Update
 from telegram.ext import ContextTypes, ConversationHandler
 
 import re
 import logging
 import paramiko
+import psycopg2
+from psycopg2 import Error, sql
 
 from dotenv import dotenv_values, find_dotenv
+from shlex import quote
 
 #Loading config data from .env
 config = dotenv_values(find_dotenv())
@@ -15,19 +19,45 @@ FIND_EMAIL, FIND_PHONE_NUMBER, VERIFY_PASSWORD =range(3)
 
 #Connect and send a request to the host and receiving a response
 def query_SSH(query : str) -> str:
-    client = paramiko.SSHClient()
-    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    client.connect(hostname=config['RM_HOST'], username=config['RM_USER'], password=config['RM_PASSWORD'], port=config['RM_PORT'])
-    stdin, stdout, stderr = client.exec_command(query)
-    data = stdout.read().decode() + stderr.read().decode()
-    client.close()
-    return str(data).replace('\\n', '\n').replace('\\t', '\t')
+    try:
+        client = paramiko.SSHClient()
+        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        client.connect(hostname=config['RM_HOST'], username=config['RM_USER'], password=config['RM_PASSWORD'], port=config['RM_PORT'])
+        stdin, stdout, stderr = client.exec_command(query)
+        data = stdout.read().decode() + stderr.read().decode()
+        return str(data).replace('\\n', '\n').replace('\\t', '\t')
+    except (Exception) as error:
+        logging.error("Ошибка при работе с SSH: %s", error)
+        return "Ошибка при работе с SSH"
+    finally:
+        if client.get_transport() is not None:
+            client.close()
 
-#Sending a message Telegram regardless of length
-async def send_reply(update: Update, data: str) -> None:
-    msgs = [data[i:i + 4096] for i in range(0, len(data), 4096)]
-    for text in msgs:
-       await update.message.reply_text(text=text)
+def query_DB(sql : sql.SQL) -> str:
+    connection = None
+    data = ""
+    try:
+        connection = psycopg2.connect(user=config['DB_USER'],
+                                password=config['DB_PASSWORD'],
+                                host=config['DB_HOST'],
+                                port=config['DB_PORT'], 
+                                database=config['DB_DATABASE'])
+
+        cursor = connection.cursor()
+        cursor.execute(query = sql)
+        for row in cursor:
+            data += ' '.join(map(str, row)) + '\n'  
+        logging.info("Команда %s успешно выполнена", sql.as_string)
+        data += "Команда успешно выполнена"
+        return data
+    except (Exception, Error) as error:
+        logging.error("Ошибка при работе с PostgreSQL: %s", error)
+        data += "Ошибка при работе с PostgreSQL."
+        return data 
+    finally:
+        if connection is not None:
+            cursor.close()
+            connection.close()
 
 # Define a few command handlers. These usually take the two arguments update and
 # context.
@@ -51,20 +81,30 @@ async def find_email_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     return FIND_EMAIL
 
 async def find_email_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    regex = re.compile(r"([-!#-'*+/-9=?A-Z^-~]+(\.[-!#-'*+/-9=?A-Z^-~]+)*|\"([]!#-[^-~ \t]|(\\[\t -~]))+\")@([-!#-'*+/-9=?A-Z^-~]+(\.[-!#-'*+/-9=?A-Z^-~]+)*|\[[\t -Z^-~]*])")
+    regex = re.compile(r"((?:[a-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[a-z0-9!#$%&'*+/=?^_`{|}~-]+)*|\"(?:[\x01-\x08\x0b\x0c\x0e-\x1f\x21\x23-\x5b\x5d-\x7f]|\\[\x01-\x09\x0b\x0c\x0e-\x7f])*\")@(?:(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]*[a-z0-9])?|\[(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?|[a-z0-9-]*[a-z0-9]:(?:[\x01-\x08\x0b\x0c\x0e-\x1f\x21-\x5a\x53-\x7f]|\\[\x01-\x09\x0b\x0c\x0e-\x7f])+)\]))")
     email = update.message.text
     result = re.finditer(regex, email)
-    msg = ''
+    data = ''
     i = 0
     for match in result:
         i+=1
-        msg += f'{i}. {match.group(0)}\n'
-    if msg:
-        msg = "Найденные email адреса:\n" + msg
+        data += f'{i}. {match.group(0)}\n'
+    if data:
+        data = "Найденные email адреса:\n" + data
     else:
-        msg = "В тексте не содержатся email адреса."
-    send_reply(msg)
+        data = "В тексте не содержатся email адреса."
+    msgs = [data[i:i + 4096] for i in range(0, len(data), 4096)]
+    for text in msgs:
+       await update.message.reply_text(text=text)
     return ConversationHandler.END
+
+
+async def get_emails_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Send a message when the command /get_emails is issued."""
+    data = query_DB(sql.SQL("select * from emails"))
+    msgs = [data[i:i + 4096] for i in range(0, len(data), 4096)]
+    for text in msgs:
+       await update.message.reply_text(text=text)
 
 
 async def find_phone_number_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -73,20 +113,37 @@ async def find_phone_number_command(update: Update, context: ContextTypes.DEFAUL
     return FIND_PHONE_NUMBER
 
 async def find_phone_number_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    regex = re.compile(r"(8|\+7)+[ \-\(]?\(?(\d{3})\)?[ \-\)]?(\d{3})[ \-]?(\d{2})[ \-]?(\d{2})")
+    regex = re.compile(r"(?:\+7|8)+[ \-\(]?\(?(\d{3})\)?[ \-\)]?(\d{3})[ \-]?(\d{2})[ \-]?(\d{2})")
     phone_number = update.message.text
     result = re.finditer(regex, phone_number)
-    msg = ''
+    data = ''
     i = 0
     for match in result:
         i+=1
-        msg += f'{i}. {match.group(0)}\n'
-    if msg:
-        msg = "Найденные номера телефонов:\n" + msg
+        data += f'{i}. {match.group(0)}\n'
+    if data:
+        data = "Найденные номера телефонов:\n" + data
     else:
-        msg = "В тексте не содержатся номера телефонов."
-    send_reply(msg)
+        data = "В тексте не содержатся номера телефонов."
+    msgs = [data[i:i + 4096] for i in range(0, len(data), 4096)]
+    for text in msgs:
+       await update.message.reply_text(text=text)
     return ConversationHandler.END
+
+async def get_phone_numbers_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Send a message when the command /get_phone_numbers is issued."""
+    data = query_DB(sql.SQL("select * from phones"))
+    msgs = [data[i:i + 4096] for i in range(0, len(data), 4096)]
+    for text in msgs:
+       await update.message.reply_text(text=text)
+
+
+async def get_repl_logs_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Send a message when the command /get_repl_logs is issued."""
+    data = query_SSH(r'cat /var/log/postgresql/postgresql-15-main.log | grep repl_user')
+    msgs = [data[i:i + 4096] for i in range(0, len(data), 4096)]
+    for text in msgs:
+       await update.message.reply_text(text=text)
 
 
 async def verify_password_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -95,57 +152,71 @@ async def verify_password_command(update: Update, context: ContextTypes.DEFAULT_
     return VERIFY_PASSWORD
 
 async def verify_password_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    regex = re.compile(r"^(?=.*?[a-z])(?=.*?[A-Z])(?=.*?[0-9])(?=.*?[#?!@$%^&*-]).{8,}$")
+    regex = re.compile(r"^(?=.*?[a-z])(?=.*?[A-Z])(?=.*?[0-9])(?=.*?[!@#$%^&*()]).{8,}$")
     verify_password = update.message.text
     result = re.search(regex, verify_password)
     if result:
-        msg = "Пароль сложный"
+        data = "Пароль сложный"
     else:
-        msg = "Пароль простой"
-    await update.message.reply_text(msg)
+        data = "Пароль простой"
+    await update.message.reply_text(data)
     return ConversationHandler.END
 
 
 async def get_release_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a message when the command /get_release is issued."""
     data = query_SSH(r'cat /etc/*release')
-    send_reply(data)
+    msgs = [data[i:i + 4096] for i in range(0, len(data), 4096)]
+    for text in msgs:
+       await update.message.reply_text(text=text)
 
 
 async def get_uname_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a message when the command /get_uname is issued."""
     data = query_SSH(r'uname -a')
-    send_reply(data)
+    msgs = [data[i:i + 4096] for i in range(0, len(data), 4096)]
+    for text in msgs:
+       await update.message.reply_text(text=text)
 
 
 async def get_uptime_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a message when the command /get_uptime is issued."""
     data = query_SSH(r'uptime')
-    send_reply(data)
+    msgs = [data[i:i + 4096] for i in range(0, len(data), 4096)]
+    for text in msgs:
+       await update.message.reply_text(text=text)
 
 
 async def get_df_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a message when the command /get_df is issued."""
     data = query_SSH(r'df -a')
-    send_reply(data)
+    msgs = [data[i:i + 4096] for i in range(0, len(data), 4096)]
+    for text in msgs:
+       await update.message.reply_text(text=text)
 
 
 async def get_free_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a message when the command /get_free is issued."""
     data = query_SSH(r'free -h')
-    send_reply(data)
+    msgs = [data[i:i + 4096] for i in range(0, len(data), 4096)]
+    for text in msgs:
+       await update.message.reply_text(text=text)
 
 
 async def get_mpstat_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a message when the command /get_mpstat is issued."""
     data = query_SSH(r'mpstat -P ALL')
-    send_reply(data)
+    msgs = [data[i:i + 4096] for i in range(0, len(data), 4096)]
+    for text in msgs:
+       await update.message.reply_text(text=text)
 
 
 async def get_w_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a message when the command /get_w is issued."""
     data = query_SSH(r'w -sfi')
-    send_reply(data)
+    msgs = [data[i:i + 4096] for i in range(0, len(data), 4096)]
+    for text in msgs:
+       await update.message.reply_text(text=text)
 
 
 async def get_auths_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -163,24 +234,32 @@ async def get_critical_command(update: Update, context: ContextTypes.DEFAULT_TYP
 async def get_ps_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a message when the command /get_ps is issued."""
     data = query_SSH(r'ps')
-    send_reply(data)
+    msgs = [data[i:i + 4096] for i in range(0, len(data), 4096)]
+    for text in msgs:
+       await update.message.reply_text(text=text)
 
 async def get_ss_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a message when the command /get_ss is issued."""
     data = query_SSH(r'ss -l')
-    send_reply(data)
+    msgs = [data[i:i + 4096] for i in range(0, len(data), 4096)]
+    for text in msgs:
+       await update.message.reply_text(text=text)
 
 async def get_apt_list_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a message when the command /get_apt_list is issued."""
-    data = " ".join(str(element) for element in context.args)
+    data = " ".join(quote(str(element)) for element in context.args)
     if data:
         data = query_SSH(r'apt list ' + data)
     else:
         data = query_SSH(r'apt list --installed')
-    send_reply(data)
+    msgs = [data[i:i + 4096] for i in range(0, len(data), 4096)]
+    for text in msgs:
+       await update.message.reply_text(text=text)
 
 
 async def get_services_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a message when the command /get_apt_list is issued."""
     data = query_SSH(r'systemctl list-units --type=service --state=active')
-    send_reply(data)
+    msgs = [data[i:i + 4096] for i in range(0, len(data), 4096)]
+    for text in msgs:
+       await update.message.reply_text(text=text)
