@@ -80,7 +80,11 @@ async def inline_button_insert(update: Update, context: ContextTypes.DEFAULT_TYP
             text += f"{column.capitalize()}: {row} успешно сохранён\n"
         else:
             text += f"{column.capitalize()}: {row} не сохранён\n'" 
-    await query.edit_message_text(text=text)
+    msg = await query.edit_message_text(text=text[:4096])
+    if not msg:
+        msgs = [text[i:i + 4096] for i in range(1, len(text), 4096)]
+        for i in msgs:
+            await update.message.reply_text(text=i,reply_to_message_id=msg.message_id)
 
 # Define a few command handlers. These usually take the two arguments update and
 # context.
