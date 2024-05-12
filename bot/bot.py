@@ -1,6 +1,7 @@
 import logging
 
-from dotenv import dotenv_values, find_dotenv
+import os
+from dotenv import load_dotenv
 
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ConversationHandler, MessageHandler, filters, CallbackQueryHandler
@@ -47,7 +48,7 @@ logger = logging.getLogger(__name__)
 
 
 #Loading config data from .env
-config = dotenv_values(find_dotenv())
+load_dotenv()
 
 #Add commands in Menu Button
 command_info = [
@@ -114,7 +115,7 @@ async def post_init(application: Application) -> None:
 def main() -> None:
     """Start the bot."""
     # Create the Application and pass it your bot's token.
-    application = Application.builder().token(config["TOKEN"]).post_init(post_init).build()
+    application = Application.builder().token(os.getenv("TOKEN")).post_init(post_init).build()
 
     command_handlers.append(ConversationHandler(
         entry_points=entry_points,
