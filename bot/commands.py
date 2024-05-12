@@ -1,17 +1,17 @@
 from telegram import ForceReply, Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, ConversationHandler
 
-import re
 import logging
+import re
 import paramiko
 import psycopg2
 from psycopg2 import Error, sql
 
-from dotenv import dotenv_values, find_dotenv
+import os
+from dotenv import load_dotenv
 from shlex import quote
 
-#Loading config data from .env
-config = dotenv_values(find_dotenv())
+load_dotenv()
 
 #States in conversation handler
 FIND_EMAIL, FIND_PHONE_NUMBER, VERIFY_PASSWORD =range(3)
@@ -21,7 +21,7 @@ def query_SSH(query : str) -> str:
     try:
         client = paramiko.SSHClient()
         client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        client.connect(hostname=config['RM_HOST'], username=config['RM_USER'], password=config['RM_PASSWORD'], port=config['RM_PORT'])
+        client.connect(hostname=os.getenv('RM_HOST'), username=os.getenv('RM_USER'), password=os.getenv('RM_PASSWORD'), port=os.getenv('RM_PORT'))
         stdin, stdout, stderr = client.exec_command(query)
         data = stdout.read().decode() + stderr.read().decode()
         logging.info("SSH: Команда %s успешно выполнена", query)
@@ -38,11 +38,11 @@ def query_DB(sql : sql.SQL) -> tuple:
     connection = None
     data = ""
     try:
-        connection = psycopg2.connect(user=config['DB_USER'],
-                                password=config['DB_PASSWORD'],
-                                host=config['DB_HOST'],
-                                port=config['DB_PORT'], 
-                                database=config['DB_DATABASE'])
+        connection = psycopg2.connect(user=os.getenv('DB_USER'),
+                                password=os.getenv('DB_PASSWORD'),
+                                host=os.getenv('DB_HOST'),
+                                port=os.getenv('DB_PORT'), 
+                                database=os.getenv('DB_DATABASE'))
         connection.autocommit = True
         cursor = connection.cursor()
         cursor.execute(query = sql)
