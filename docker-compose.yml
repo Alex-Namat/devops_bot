@@ -10,18 +10,16 @@ services:
     tty: true
     env_file:
       - .env
-  db_image:
+  db:
     image: db_image
     build:
       context: ./db
       dockerfile: Dockerfile
-    container_name: ${DB_HOST}
+    container_name: db
     environment:
       - POSTGRES_PASSWORD=${DB_PASSWORD}
       - POSTGRES_USER=${DB_USER}
       - POSTGRES_DB=${DB_DATABASE}
-      - POSTGRES_HOST_AUTH_METHOD="scram-sha-256"
-      - POSTGRES_INITDB_ARGS="--auth-host=scram-sha-256"
     env_file:
       - .env
     ports:
@@ -33,9 +31,6 @@ services:
       -c max_wal_senders=10 
       -c wal_level=replica
       -c wal_log_hints=on 
-      -c hot_standby=on 
-      -c max_replication_slots=10 
-      -c hot_standby_feedback=on
       -c log_replication_commands=on
       -c logging_collector=on
       -c password_encryption=scram-sha-256
@@ -44,25 +39,22 @@ services:
     build:
       context: ./db_repl
       dockerfile: Dockerfile
-    container_name: ${DB_REPL_HOST}
+      args:
+      - HOST=${DB_HOST}
+      - REPL_USER=${DB_REPL_USER}
+      - REPL_PASSWORD=${DB_REPL_PASSWORD}
+    container_name: db_repl
     environment:
       - POSTGRES_PASSWORD=${DB_REPL_PASSWORD}
       - POSTGRES_USER=${DB_REPL_USER}
-      - PGPASSFILE=/var/lib/postgresql/.pgpass
     env_file:
       - .env
     ports:
       - ${DB_REPL_PORT}:${DB_PORT}
     command: |
       bash -c "
-      until pg_basebackup -R -h ${DB_HOST} -U ${DB_REPL_USER} -D /var/lib/postgresql/data --slot=replication_slot
-      do
-      echo 'Waiting for primary to connect...'
-      sleep 1s
-      done
-      echo 'Backup done, starting replica...'
-      chmod 0700 /var/lib/postgresql/data
-      postgres
+      apk add expect && \
+      ./script.sh
       "
     depends_on:
-      - db_image
+      - ${DB_HOST}
