@@ -181,15 +181,15 @@ async def get_repl_logs_command(update: Update, context: ContextTypes.DEFAULT_TY
     """Send a message when the command /get_repl_logs is issued."""
     result = query_DB(sql.SQL("SELECT log_line  \
                             FROM regexp_split_to_table(pg_read_file(pg_current_logfile()), E'\n')log_line \
-                            WHERE regexp_substr(log_line,{repl_user}, 1, 1, 'i', 1) is not null;")
-                            .format(repl_user = sql.Literal(os.getenv('DB_REPL_USER')+'@')))
+                            WHERE regexp_substr(log_line,{regex}, 1, 1, 'i', 1) is not null;")
+                            .format(regex = sql.Literal('replication|репликации|' + os.getenv('DB_REPL_USER') + '@')))
     if result[0]:
         data = result[1]
         msgs = [data[i:i + 4096] for i in range(0, len(data), 4096)]
         for text in msgs:
             await update.message.reply_text(text=text)
     else:
-       await update.message.reply_text(text="Логи репликации не найдены.")
+       await update.message.reply_text(text="Ошибка при работе с PostgreSQL.")
 
 
 async def verify_password_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
