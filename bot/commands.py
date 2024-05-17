@@ -130,7 +130,7 @@ async def find_email_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 async def get_emails_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a message when the command /get_emails is issued."""
-    result = query_DB(sql.SQL("select * from emails"))
+    result = query_DB(sql.SQL("SELECT * FROM emails"))
     if result[0]:
         data = result[1]
         msgs = [data[i:i + 4096] for i in range(0, len(data), 4096)]
@@ -167,7 +167,7 @@ async def find_phone_number_query(update: Update, context: ContextTypes.DEFAULT_
 
 async def get_phone_numbers_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a message when the command /get_phone_numbers is issued."""
-    result = query_DB(sql.SQL("select * from phones"))
+    result = query_DB(sql.SQL("SELECT * FROM phones"))
     if result[0]:
         data = result[1]
         msgs = [data[i:i + 4096] for i in range(0, len(data), 4096)]
@@ -179,10 +179,17 @@ async def get_phone_numbers_command(update: Update, context: ContextTypes.DEFAUL
 
 async def get_repl_logs_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a message when the command /get_repl_logs is issued."""
-    data = query_SSH(r'cat /var/log/postgresql/postgresql-15-main.log | grep repl_user')
-    msgs = [data[i:i + 4096] for i in range(0, len(data), 4096)]
-    for text in msgs:
-       await update.message.reply_text(text=text)
+    result = query_DB(sql.SQL("SELECT log_line  \
+                            FROM regexp_split_to_table(pg_read_file(pg_current_logfile()), E'\n')log_line \
+                            WHERE regexp_substr(log_line,{repl_user}, 1, 1, 'i', 1) is not null;")
+                            .format(repl_user = sql.Literal(os.getenv('DB_REPL_USER')+'@')))
+    if result[0]:
+        data = result[1]
+        msgs = [data[i:i + 4096] for i in range(0, len(data), 4096)]
+        for text in msgs:
+            await update.message.reply_text(text=text)
+    else:
+       await update.message.reply_text(text="Логи репликации не найдены.")
 
 
 async def verify_password_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -228,7 +235,7 @@ async def get_uptime_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 async def get_df_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a message when the command /get_df is issued."""
-    data = query_SSH(r'df -a')
+    data = query_SSH(r'df -h')
     msgs = [data[i:i + 4096] for i in range(0, len(data), 4096)]
     for text in msgs:
        await update.message.reply_text(text=text)
@@ -279,7 +286,7 @@ async def get_ps_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 async def get_ss_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a message when the command /get_ss is issued."""
-    data = query_SSH(r'ss -l')
+    data = query_SSH(r'ss -a')
     msgs = [data[i:i + 4096] for i in range(0, len(data), 4096)]
     for text in msgs:
        await update.message.reply_text(text=text)
