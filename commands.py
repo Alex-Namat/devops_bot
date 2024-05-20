@@ -295,7 +295,7 @@ async def get_apt_list_command(update: Update, context: ContextTypes.DEFAULT_TYP
     """Send a message when the command /get_apt_list is issued."""
     data = " ".join(quote(str(element)) for element in context.args)
     if data:
-        data = query_SSH(r'apt list --installed' + data)
+        data = query_SSH(r'apt list --installed ' + data)
     else:
         data = query_SSH(r'apt list --installed')
     msgs = [data[i:i + 4096] for i in range(0, len(data), 4096)]
