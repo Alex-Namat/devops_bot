@@ -189,4 +189,4 @@
 
     - name: Run Telegram bot
       changed_when: false
-      ansible.builtin.command: python3 {{ ansible_env.HOME }}/devops_bot/bot/bot.py
+      ansible.builtin.command: python3 {{ ansible_env.HOME }}/devops_bot/bot.py
