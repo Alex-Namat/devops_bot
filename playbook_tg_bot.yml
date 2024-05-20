@@ -1,0 +1,49 @@
+- name: Install Telegram bot
+  hosts: bot
+  environment:
+    TOKEN: '{{ TOKEN }}'
+    RM_HOST: '{{ RM_HOST }}'
+    RM_PORT: '{{ RM_PORT }}'
+    RM_USER: '{{ RM_USER }}'
+    RM_PASSWORD: '{{ RM_PASSWORD }}'
+    DB_USER: '{{ DB_USER }}'
+    DB_PASSWORD: '{{ DB_PASSWORD }}'
+    DB_HOST: '{{ DB_HOST }}'
+    DB_PORT: '{{ DB_PORT }}'
+    DB_DATABASE: '{{ DB_DATABASE }}'
+  tasks:
+
+    - name: Install git and python3-pip
+      become: true
+      ansible.builtin.package:
+        name:
+          - git
+          - python3-pip
+
+    - name: Git clone repositories
+      become: true
+      become_user: ansible
+      ansible.builtin.git:
+        repo: https://github.com/Alex-Namat/devops_bot.git
+        dest: '{{ ansible_env.HOME }}/devops_bot'
+        version: main
+
+    - name: Remove script pip from Debian
+      become: true
+      ansible.builtin.file:
+        path: /usr/lib/python3.11/EXTERNALLY-MANAGED
+        state: absent
+      when: ansible_facts['os_family'] == "Debian"
+
+
+    - name: Install module python
+      ansible.builtin.pip:
+        name:
+          - paramiko
+          - python-dotenv
+          - python-telegram-bot
+          - psycopg2-binary
+
+    - name: Run Telegram bot
+      changed_when: false
+      ansible.builtin.command: python3 {{ ansible_env.HOME }}/devops_bot/bot/bot.py
