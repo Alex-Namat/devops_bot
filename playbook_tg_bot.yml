@@ -1,3 +1,85 @@
+- name: Install Database
+  hosts: db
+  tasks:
+    - name: Install PostgreSQL
+      become: true
+      ansible.builtin.package:
+        name:
+          - postgresql
+          - postgresql-contrib
+
+    - name: Copy init.sql
+      become: true
+      ansible.builtin.copy:
+        src: init.sql
+        dest: /tmp/db/
+        owner: postgres
+        group: postgres
+        mode: '0644'
+    - name: Copy pg_hba.conf
+      become: true
+      ansible.builtin.copy:
+        src: pg_hba.conf
+        dest: /var/lib/postgresql/data/
+        owner: postgres
+        group: postgres
+        mode: '0644'
+
+    - name: Replace DB_USER
+      become: true
+      ansible.builtin.replace:
+        path: /tmp/db/init.sql
+        regexp: 'DB_USER'
+        replace: '{{ DB_USER }}'
+    - name: Replace DB_PASSWORD
+      become: true
+      ansible.builtin.replace:
+        path: /tmp/db/init.sql
+        regexp: 'DB_PASSWORD'
+        replace: '{{ DB_PASSWORD }}'
+    - name: Replace BOT_HOST
+      become: true
+      ansible.builtin.replace:
+        path: /tmp/db/init.sql
+        regexp: 'BOT_HOST'
+        replace: "{{ hostvars['bot']['ansible_host'] }}"
+    - name: Replace DB_DATABASE
+      become: true
+      ansible.builtin.replace:
+        path: /tmp/db/init.sql
+        regexp: 'DB_DATABASE'
+        replace: '{{ DB_DATABASE }}'
+    - name: Replace DB_REPL_USER
+      become: true
+      ansible.builtin.replace:
+        path: /tmp/db/init.sql
+        regexp: 'DB_REPL_USER'
+        replace: '{{ DB_REPL_USER }}'
+    - name: Replace DB_REPL_PASSWORD
+      become: true
+      ansible.builtin.replace:
+        path: /tmp/db/init.sql
+        regexp: 'DB_REPL_PASSWORD'
+        replace: '{{ DB_REPL_PASSWORD }}'
+    - name: Replace DB_REPL_HOST
+      become: true
+      ansible.builtin.replace:
+        path: /tmp/db/init.sql
+        regexp: 'DB_REPL_HOST'
+        replace: '{{ DB_REPL_HOST }}'
+
+    - name: Initialization database
+      changed_when: false
+      ansible.builtin.command: psql -f /tmp/db/init.sql
+      become: true
+      become_user: postgres
+
+    - name: Restart PostgreSQL
+      become: true
+      ansible.builtin.service:
+        name: postgresql
+        state: restarted
+
 - name: Install Telegram bot
   hosts: bot
   environment:
@@ -28,7 +110,7 @@
         dest: '{{ ansible_env.HOME }}/devops_bot'
         version: main
 
-    - name: Remove script pip from Debian
+    - name: Remove script pip from Debian (Error PEP 668)
       become: true
       ansible.builtin.file:
         path: /usr/lib/python3.11/EXTERNALLY-MANAGED

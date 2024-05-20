@@ -7,12 +7,12 @@ all:
     RM_PASSWORD: debian
     DB_USER: devops_bot
     DB_PASSWORD: devops_bot
-    DB_HOST: 192.168.93.157
+    DB_HOST: 192.168.93.156
     DB_PORT: 5432
     DB_DATABASE: db_devops
     DB_REPL_USER: repl_user
     DB_REPL_PASSWORD: repl_user
-    DB_REPL_HOST: db_repl_host
+    DB_REPL_HOST: 192.168.93.157
     DB_REPL_PORT: 5432
   hosts:
     bot:
