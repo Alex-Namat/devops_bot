@@ -1,18 +1,33 @@
 - name: Install Database
   hosts: db
   tasks:
+    - name: Ensure gpg is installed
+      become: true
+      ansible.builtin.package:
+        name: gpg
+    - name: Add repository signing key
+      become: true
+      ansible.builtin.apt_key:
+        url: "https://www.postgresql.org/media/keys/ACCC4CF8.asc"
+        state: present
+    - name: Add PostgreSQL repository into sources list
+      become: true
+      ansible.builtin.apt_repository:
+        repo: deb http://apt.postgresql.org/pub/repos/apt/ {{ ansible_distribution_release }}-pgdg main
+        state: present
+        filename: pgdg
+
     - name: Install PostgreSQL
       become: true
       ansible.builtin.package:
         name:
-          - postgresql
-          - postgresql-contrib
+          - postgresql-15
 
     - name: Copy init.sql
       become: true
       ansible.builtin.copy:
         src: init.sql
-        dest: /tmp/db/
+        dest: '{{ PG_DATA }}/'
         owner: postgres
         group: postgres
         mode: '0644'
@@ -20,7 +35,7 @@
       become: true
       ansible.builtin.copy:
         src: pg_hba.conf
-        dest: /var/lib/postgresql/data/
+        dest: '{{ PG_DATA }}/'
         owner: postgres
         group: postgres
         mode: '0644'
@@ -28,49 +43,55 @@
     - name: Replace DB_USER
       become: true
       ansible.builtin.replace:
-        path: /tmp/db/init.sql
+        path: '{{ PG_DATA }}/init.sql'
         regexp: 'DB_USER'
         replace: '{{ DB_USER }}'
     - name: Replace DB_PASSWORD
       become: true
       ansible.builtin.replace:
-        path: /tmp/db/init.sql
+        path: '{{ PG_DATA }}/init.sql'
         regexp: 'DB_PASSWORD'
         replace: '{{ DB_PASSWORD }}'
     - name: Replace BOT_HOST
       become: true
       ansible.builtin.replace:
-        path: /tmp/db/init.sql
+        path: '{{ PG_DATA }}/init.sql'
         regexp: 'BOT_HOST'
-        replace: "{{ hostvars['bot']['ansible_host'] }}"
+        replace: '{{ hostvars["bot"]["ansible_host"] }}'
     - name: Replace DB_DATABASE
       become: true
       ansible.builtin.replace:
-        path: /tmp/db/init.sql
+        path: '{{ PG_DATA }}/init.sql'
         regexp: 'DB_DATABASE'
         replace: '{{ DB_DATABASE }}'
     - name: Replace DB_REPL_USER
       become: true
       ansible.builtin.replace:
-        path: /tmp/db/init.sql
+        path: '{{ PG_DATA }}/init.sql'
         regexp: 'DB_REPL_USER'
         replace: '{{ DB_REPL_USER }}'
     - name: Replace DB_REPL_PASSWORD
       become: true
       ansible.builtin.replace:
-        path: /tmp/db/init.sql
+        path: '{{ PG_DATA }}/init.sql'
         regexp: 'DB_REPL_PASSWORD'
         replace: '{{ DB_REPL_PASSWORD }}'
     - name: Replace DB_REPL_HOST
       become: true
       ansible.builtin.replace:
-        path: /tmp/db/init.sql
+        path: '{{ PG_DATA }}/init.sql'
         regexp: 'DB_REPL_HOST'
-        replace: '{{ DB_REPL_HOST }}'
+        replace: '{{ hostvars["db_repl"]["ansible_host"] }}'
+    - name: Replace PG_DATA
+      become: true
+      ansible.builtin.replace:
+        path: '{{ PG_DATA }}/init.sql'
+        regexp: 'PG_DATA'
+        replace: '{{ PG_DATA }}'
 
     - name: Initialization database
       changed_when: false
-      ansible.builtin.command: psql -f /tmp/db/init.sql
+      ansible.builtin.command: psql -f '{{ PG_DATA }}/init.sql'
       become: true
       become_user: postgres
 
@@ -79,6 +100,45 @@
       ansible.builtin.service:
         name: postgresql
         state: restarted
+
+- name: Install database replication
+  hosts: db_repl
+  tasks:
+    - name: Ensure gpg is installed
+      become: true
+      ansible.builtin.package:
+        name: gpg
+    - name: Add repository signing key
+      become: true
+      ansible.builtin.apt_key:
+        url: "https://www.postgresql.org/media/keys/ACCC4CF8.asc"
+        state: present
+    - name: Add PostgreSQL repository into sources list
+      become: true
+      ansible.builtin.apt_repository:
+        repo: deb http://apt.postgresql.org/pub/repos/apt/ {{ ansible_distribution_release }}-pgdg main
+        state: present
+        filename: pgdg
+
+    - name: Install PostgreSQL
+      become: true
+      ansible.builtin.package:
+        name:
+          - postgresql-15
+
+    - name: Delete PG_DATA directory
+      become: true
+      ansible.builtin.file:
+        path: '/var/lib/postgresql/'
+        state: absent
+
+    - name: Run pg_basebackup
+      changed_when: false
+      become: true
+      ansible.builtin.command: pg_basebackup -h '{{ hostvars["db"]["ansible_host"] }}' -U '{{ DB_REPL_USER }}' -D '{{ PG_DATA }}/' -P
+      environment:
+        PGPASSWORD: '{{ DB_REPL_PASSWORD }}'
+
 
 - name: Install Telegram bot
   hosts: bot
@@ -90,9 +150,10 @@
     RM_PASSWORD: '{{ RM_PASSWORD }}'
     DB_USER: '{{ DB_USER }}'
     DB_PASSWORD: '{{ DB_PASSWORD }}'
-    DB_HOST: '{{ DB_HOST }}'
-    DB_PORT: '{{ DB_PORT }}'
+    DB_HOST: '{{ hostvars["db"]["ansible_host"] }}'
+    DB_PORT: '5432'
     DB_DATABASE: '{{ DB_DATABASE }}'
+    DB_REPL_USER: '{{ DB_REPL_USER }}'
   tasks:
 
     - name: Install git and python3-pip

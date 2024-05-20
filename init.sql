@@ -24,13 +24,13 @@ GRANT EXECUTE ON FUNCTION pg_catalog.pg_current_logfile() TO DB_USER;
 GRANT EXECUTE ON FUNCTION pg_catalog.pg_read_file(text) TO DB_USER;
 
 CREATE TABLE hba ( lines text ); 
-COPY hba FROM '/var/lib/postgresql/data/pg_hba.conf';
+COPY hba FROM 'PG_DATA/pg_hba.conf';
 INSERT INTO hba (lines) VALUES ('host replication DB_REPL_USER DB_REPL_HOST/24 scram-sha-256');
 INSERT INTO hba (lines) VALUES ('host all all BOT_HOST/32 password');
-COPY hba TO '/var/lib/postgresql/data/pg_hba.conf';
+COPY hba TO 'PG_DATA/pg_hba.conf';
 
 ALTER SYSTEM SET listen_addresses = '*';
-ALTER SYSTEM SET hba_file = '/var/lib/postgresql/data/pg_hba.conf';
+ALTER SYSTEM SET hba_file = 'PG_DATA/pg_hba.conf';
 ALTER SYSTEM SET archive_mode = on;
 ALTER SYSTEM SET archive_command = 'cp %p /oracle/pg_data/archive/%f';
 ALTER SYSTEM SET max_wal_senders = 10;
