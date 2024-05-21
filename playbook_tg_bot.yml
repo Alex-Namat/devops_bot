@@ -27,15 +27,7 @@
       become: true
       ansible.builtin.copy:
         src: init.sql
-        dest: '{{ PG_DATA }}/'
-        owner: postgres
-        group: postgres
-        mode: '0644'
-    - name: Copy pg_hba.conf
-      become: true
-      ansible.builtin.copy:
-        src: pg_hba.conf
-        dest: '{{ PG_DATA }}/'
+        dest: '{{ PG_DATA }}/init.sql'
         owner: postgres
         group: postgres
         mode: '0644'
@@ -126,6 +118,12 @@
         name:
           - postgresql-15
 
+    - name: Stop PostgreSQL
+      become: true
+      ansible.builtin.service:
+        name: postgresql
+        state: stopped
+
     - name: Delete PG_DATA directory
       become: true
       ansible.builtin.file:
@@ -135,9 +133,20 @@
     - name: Run pg_basebackup
       changed_when: false
       become: true
-      ansible.builtin.command: pg_basebackup -h '{{ hostvars["db"]["ansible_host"] }}' -U '{{ DB_REPL_USER }}' -D '{{ PG_DATA }}/' -P
+      ansible.builtin.command: pg_basebackup -R -h '{{ hostvars["db"]["ansible_host"] }}' -U '{{ DB_REPL_USER }}' -D '{{ PG_DATA }}/' -P
       environment:
         PGPASSWORD: '{{ DB_REPL_PASSWORD }}'
+
+    - name: Chown PG_DATA
+      changed_when: false
+      become: true
+      ansible.builtin.command: chown -R postgres:postgres /var/lib/postgresql/
+
+    - name: Start PostgreSQL
+      become: true
+      ansible.builtin.service:
+        name: postgresql
+        state: started
 
 
 - name: Install Telegram bot

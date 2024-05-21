@@ -10,7 +10,7 @@ all:
     DB_DATABASE: db_devops
     DB_REPL_USER: repl_user
     DB_REPL_PASSWORD: repl_user
-    PG_DATA: /var/lib/postgresql/data
+    PG_DATA: /var/lib/postgresql/15/main
   hosts:
     bot:
       ansible_host: 192.168.93.156
